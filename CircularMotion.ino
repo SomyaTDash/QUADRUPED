@@ -1,78 +1,95 @@
 #include <Servo.h>
+#include <math.h>
 
-// ------------------ SERVO SETUP ------------------
-Servo hip;
-Servo knee;
+Servo hipServo;
+Servo kneeServo;
 
+// ---------------- LEG DIMENSIONS (cm) ----------------
+float L1 = 14.0;
+float L2 = 12.0;
+
+// ---------------- SERVO PINS ----------------
 int hipPin = 9;
 int kneePin = 10;
 
-// ------------------ LEG GEOMETRY ------------------
-// Your real measured link lengths (mm)
-float L1 = 140;   // hip → knee
-float L2 = 120;   // knee → foot
+// ---------------- CIRCLE PARAMETERS ----------------
+float cx = 10.0;
+float cy = -10.0;
+float r  = 3.0;
 
-// ------------------ INVERSE KINEMATICS ------------------
-void moveToXY(float x, float y) {
+// ---------------- INITIAL SERVO POSITIONS ----------------
+// Adjust these to match your mechanical neutral pose
+int hipInit  = 90;
+int kneeInit = 90;
 
-  // IK math
-  float D = (x*x + y*y - L1*L1 - L2*L2) / (2 * L1 * L2);
-  D = constrain(D, -1.0, 1.0);   // avoid NaN
+void setup() {
+  hipServo.attach(hipPin);
+  kneeServo.attach(kneePin);
 
-  float kneeRad = acos(D);
-  float kneeDeg = kneeRad * 180.0 / PI;
+  Serial.begin(9600);
 
-  float hipRad = atan2(y, x) - atan2(L2 * sin(kneeRad), L1 + L2 * cos(kneeRad));
-  float hipDeg = hipRad * 180.0 / PI;
-
-  // Adjust depending on physical orientation
-  float hipServo  = hipDeg + 90;
-  float kneeServo = 180 - kneeDeg;
-
-  hip.write(hipServo);
-  knee.write(kneeServo);
+  // -------- INITIALIZE LEG POSITION --------
+  initializeLeg();
 }
 
-// ------------------ CIRCLE MOTION ------------------
-void moveCircle(float cx, float cy, float radius, int steps, bool clockwise, int stepDelayMs) {
-  for (int i = 0; i <= steps; i++) {
+void loop() {
+  drawCircle();
+}
 
-    float t = (float)i / (float)steps;
-    float angle = clockwise ? (2 * PI * (1 - t)) : (2 * PI * t);
+// ------------------------------------------------------
+// FUNCTION: Smooth initialization
+// ------------------------------------------------------
+void initializeLeg() {
+  int currentHip  = hipServo.read();
+  int currentKnee = kneeServo.read();
 
-    float x = cx + radius * cos(angle);
-    float y = cy + radius * sin(angle);
+  for (int i = 0; i <= 50; i++) {
+    int hipPos  = map(i, 0, 50, currentHip, hipInit);
+    int kneePos = map(i, 0, 50, currentKnee, kneeInit);
 
-    moveToXY(x, y);
-    delay(stepDelayMs);
+    hipServo.write(hipPos);
+    kneeServo.write(kneePos);
+
+    delay(20);
+  }
+
+  delay(1000); // settle time
+}
+
+// ------------------------------------------------------
+// FUNCTION: Draw circle using IK
+// ------------------------------------------------------
+void drawCircle() {
+  for (int deg = 0; deg <= 360; deg += 5) {
+
+    float t = radians(deg);
+
+    // Circle point
+    float x = cx + r * cos(t);
+    float y = cy + r * sin(t);
+
+    float d = sqrt(x * x + y * y);
+    if (d > (L1 + L2)) continue;
+
+    // -------- IK --------
+    float cosKnee = (L1*L1 + L2*L2 - d*d) / (2 * L1 * L2);
+    float kneeRad = acos(constrain(cosKnee, -1, 1));
+
+    float alpha = atan2(y, x);
+    float beta  = acos((L1*L1 + d*d - L2*L2) / (2 * L1 * d));
+    float hipRad = alpha - beta;
+
+    float hipDeg  = degrees(hipRad);
+    float kneeDeg = degrees(kneeRad);
+
+    // -------- Servo mapping --------
+    int hipServoAngle  = 90 + hipDeg;
+    int kneeServoAngle = 180 - kneeDeg;
+
+    hipServo.write(constrain(hipServoAngle, 0, 180));
+    kneeServo.write(constrain(kneeServoAngle, 0, 180));
+
+    delay(30);
   }
 }
 
-// ------------------ SETUP ------------------
-void setup() {
-  hip.attach(hipPin);
-  knee.attach(kneePin);
-
-  // Strong alignment pulse
-  hip.write(90);
-  knee.write(90);
-  delay(1500);
-
-  // Move to safe neutral point
-  moveToXY(120, -150);
-  delay(700);
-}
-
-// ------------------ LOOP ------------------
-void loop() {
-
-  float cx = 140;     // center X
-  float cy = -150;    // center Y
-  float radius = 20;  // circle radius
-  int steps = 150;    // smooth
-  int d = 5;          // fast motion
-
-  moveCircle(cx, cy, radius, steps, true, d);
-
-  delay(200);
-}
